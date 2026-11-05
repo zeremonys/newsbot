@@ -1,0 +1,57 @@
+name: NewsTrader
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # ทุกชั่วโมง นาทีที่ 17 (เวลา UTC)
+    - cron: "7 1 * * 1"    # สรุปสถิติทุกวันจันทร์ 08:07 น. เวลาไทย
+  workflow_dispatch:        # ปุ่ม Run workflow สำหรับสั่งรันเอง
+    inputs:
+      mode:
+        description: "news = ดึงข่าวตอนนี้, stats = โพสต์สถิติ"
+        type: choice
+        options: [news, stats]
+        default: news
+
+permissions:
+  contents: write           # ให้บันทึกไฟล์ newsbot.db กลับเข้า repo ได้
+
+concurrency:
+  group: newsbot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run bot
+        run: python run.py
+        env:
+          RUN_MODE: ${{ (github.event.schedule == '7 1 * * 1' || inputs.mode == 'stats') && 'stats' || 'news' }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PROVIDER: ${{ vars.PROVIDER }}
+          MODEL: ${{ vars.MODEL }}
+          MARKETS: ${{ vars.MARKETS }}
+          LANGUAGE: ${{ vars.LANGUAGE }}
+          MAX_EVENTS: ${{ vars.MAX_EVENTS }}
+          BOT_NAME: ${{ vars.BOT_NAME }}
+
+      - name: Save state
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add newsbot.db
+          git diff --cached --quiet || (git commit -m "update newsbot state" && git push)
