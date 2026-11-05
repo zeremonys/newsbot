@@ -65,6 +65,7 @@ NEWS_MAX_AGE_HOURS = int(_env("NEWS_MAX_AGE_HOURS", "3"))
 BOT_NAME = _env("BOT_NAME", "News Trader")
 DB_PATH = _env("DB_PATH", "newsbot.db")
 RUN_MODE = _env("RUN_MODE", "news")  # news / stats
+AI_TIMEOUT = float(_env("AI_TIMEOUT", "150"))  # วินาที รอ AI ตอบได้นานสุดต่อครั้ง
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("newsbot")
@@ -213,7 +214,7 @@ def _ask(model, user_msg):
         raise SystemExit(f"ยังไม่ได้ตั้งค่า {_P['key_env']}")
     if PROVIDER == "claude":
         from anthropic import Anthropic
-        resp = Anthropic(api_key=key).messages.create(
+        resp = Anthropic(api_key=key, timeout=AI_TIMEOUT, max_retries=1).messages.create(
             model=model, max_tokens=4000, system=SYSTEM_PROMPT,
             tools=[{"name": TOOL_NAME, "description": "Report market-moving events", "input_schema": SCHEMA}],
             tool_choice={"type": "tool", "name": TOOL_NAME},
@@ -224,15 +225,19 @@ def _ask(model, user_msg):
         return []
 
     from openai import BadRequestError, OpenAI
-    client = OpenAI(api_key=key, base_url=_P["base_url"])
+    client = OpenAI(api_key=key, base_url=_P["base_url"], timeout=AI_TIMEOUT, max_retries=1)
     tool = {"type": "function", "function": {
         "name": TOOL_NAME, "description": "Report market-moving events", "parameters": SCHEMA}}
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user_msg}]
     err = None
-    for choice in ("required", "auto"):
+    # ลองแบบ "คิดน้อย" ก่อนให้ตอบเร็ว ถ้ารุ่นนั้นไม่รองรับค่อยถอยไปแบบปกติ
+    attempts = [("required", {"reasoning_effort": "low"}), ("required", {}), ("auto", {})]
+    if PROVIDER != "gemini":
+        attempts = attempts[1:]
+    for choice, extra in attempts:
         try:
             resp = client.chat.completions.create(
-                model=model, messages=msgs, tools=[tool], tool_choice=choice, max_tokens=4000)
+                model=model, messages=msgs, tools=[tool], tool_choice=choice, max_tokens=8000, **extra)
         except BadRequestError as e:
             err = e
             continue
@@ -252,7 +257,7 @@ def discover_models():
     if PROVIDER == "claude":
         return []
     from openai import OpenAI
-    client = OpenAI(api_key=os.environ.get(_P["key_env"], "").strip(), base_url=_P["base_url"])
+    client = OpenAI(api_key=os.environ.get(_P["key_env"], "").strip(), base_url=_P["base_url"], timeout=30)
     try:
         ids = [m.id.split("/", 1)[1] if m.id.startswith("models/") else m.id for m in client.models.list()]
     except Exception as e:  # noqa: BLE001
@@ -309,9 +314,9 @@ def latest_bar(ticker):
     """(ราคา, เวลา UTC) ของแท่งล่าสุด / None = ไม่มี ticker นี้ / PriceUnavailable = ดึงไม่ได้"""
     try:
         t = yf.Ticker(ticker)
-        h = t.history(period="5d", interval="5m")
+        h = t.history(period="5d", interval="5m", timeout=10)
         if h.empty:
-            h = t.history(period="5d")
+            h = t.history(period="5d", timeout=10)
     except Exception as e:  # noqa: BLE001
         raise PriceUnavailable(str(e)) from e
     if h.empty:
@@ -457,8 +462,12 @@ def run_news():
 
 
 if __name__ == "__main__":
+    started = time.time()
     init_db()
     if RUN_MODE == "stats":
         send_webhook([stats_embed()])
     else:
         run_news()
+    log.info("done in %.0fs", time.time() - started)
+    logging.shutdown()
+    os._exit(0)  # ปิดทันที ไม่รอ thread ค้างของไลบรารี
