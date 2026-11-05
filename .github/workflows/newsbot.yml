@@ -22,11 +22,11 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -34,7 +34,8 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Run bot
-        run: python run.py
+        run: python -u run.py
+        timeout-minutes: 7
         env:
           RUN_MODE: ${{ (github.event.schedule == '7 1 * * 1' || inputs.mode == 'stats') && 'stats' || 'news' }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
