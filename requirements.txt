@@ -1,0 +1,6 @@
+openai>=1.40
+anthropic>=0.40
+feedparser>=6.0
+yfinance>=0.2.50
+numpy
+python-dotenv
