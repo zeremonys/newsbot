@@ -247,20 +247,56 @@ def _ask(model, user_msg):
     raise err
 
 
+def discover_models():
+    """ถามผู้ให้บริการว่าบัญชีนี้ใช้รุ่นอะไรได้บ้าง แล้วเรียงรุ่นที่น่าใช้ที่สุดขึ้นก่อน"""
+    if PROVIDER == "claude":
+        return []
+    from openai import OpenAI
+    client = OpenAI(api_key=os.environ.get(_P["key_env"], "").strip(), base_url=_P["base_url"])
+    try:
+        ids = [m.id.split("/", 1)[1] if m.id.startswith("models/") else m.id for m in client.models.list()]
+    except Exception as e:  # noqa: BLE001
+        log.warning("list models failed: %s", e)
+        return []
+    log.info("available models: %s", ", ".join(ids))
+    if PROVIDER != "gemini":
+        return []
+    skip = ("image", "tts", "audio", "live", "embed", "vision", "native", "robotics", "computer")
+    flash = [i for i in ids if "flash" in i and not any(s in i for s in skip)]
+
+    def key(i):
+        m = re.search(r"gemini-(\d+(?:\.\d+)?)", i)
+        ver = float(m.group(1)) if m else 0.0
+        return (-ver, "lite" in i, "preview" in i or "exp" in i, len(i))
+
+    return sorted(flash, key=key)[:4]
+
+
 def analyze(items):
     user_msg = "Headlines:\n" + "\n".join(
         f"[{n}] ({i['source']}) {i['title']} — {i['summary']}" for n, i in enumerate(items))
-    err = None
-    for model in MODELS:
+    err, tried = None, []
+    candidates = list(MODELS)
+    discovered = False
+    while candidates:
+        model = candidates.pop(0)
+        if model in tried:
+            continue
+        tried.append(model)
         try:
             events = _ask(model, user_msg)
             log.info("analyzed with %s/%s: %d events", PROVIDER, model, len(events))
+            if model not in MODELS:
+                log.info("tip: ตั้ง Variable MODEL=%s เพื่อให้เริ่มจากรุ่นนี้ทุกครั้ง", model)
             return events
         except SystemExit:
             raise
         except Exception as e:  # noqa: BLE001
             log.warning("model %s failed: %s", model, str(e)[:300])
             err = e
+        if not candidates and not discovered:  # รุ่นที่ตั้งไว้ใช้ไม่ได้ทั้งหมด -> หาเองอัตโนมัติ
+            discovered = True
+            candidates = [m for m in discover_models() if m not in tried]
     raise err
 
 
