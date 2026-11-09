@@ -54,5 +54,5 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add newsbot.db
+          git add newsbot.db docs
           git diff --cached --quiet || (git commit -m "update newsbot state" && git push)
